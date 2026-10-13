@@ -1,0 +1,32 @@
+<!doctype html><html><head><meta charset="utf-8">
+<title>code shot 2</title>
+<style>
+  body { margin:0; background:#1e1e1e; }
+  .win { max-width:1060px; margin:24px auto; background:#1e1e1e; border:1px solid #333;
+         border-radius:10px; overflow:hidden; font:15px/1.55 Consolas, monospace; }
+  .tab { background:#252526; color:#ddd; padding:8px 16px; font-family:Segoe UI, sans-serif;
+         font-size:14px; border-bottom:1px solid #333; }
+  pre { margin:0; padding:16px 18px; color:#d4d4d4; }
+  .k { color:#569cd6; } .s { color:#ce9178; } .c { color:#6a9955; } .f { color:#dcdcaa; } .n { color:#b5cea8; }
+</style></head><body><div class="win">
+<div class="tab">host_launcher.py — real CUDA path (torch / cupy / numba)</div>
+<pre><code><span class="k">def</span> <span class="f">detect_real_device</span>():
+    <span class="k">try</span>:
+        <span class="k">import</span> torch
+        <span class="k">if</span> torch.cuda.<span class="f">is_available</span>():
+            <span class="k">return</span> (torch.cuda.<span class="f">get_device_name</span>(<span class="n">0</span>), <span class="s">"torch"</span>)
+    <span class="k">except</span> Exception:
+        <span class="k">pass</span>
+    <span class="k">try</span>:
+        <span class="k">import</span> cupy
+        <span class="k">if</span> cupy.cuda.runtime.<span class="f">getDeviceCount</span>() &gt; <span class="n">0</span>:
+            <span class="k">return</span> (<span class="s">"cupy-cuda"</span>, <span class="s">"cupy"</span>)
+    <span class="k">except</span> Exception:
+        <span class="k">pass</span>
+
+<span class="c"># --cuda: genuine H2D / kernel / D2H, same JSON shape</span>
+dx = torch.<span class="f">from_numpy</span>(x).<span class="f">cuda</span>()   <span class="c"># H2D</span>
+out = a * dx + dy                     <span class="c"># kernel</span>
+torch.cuda.<span class="f">synchronize</span>()               <span class="c"># sync</span>
+host = out.<span class="f">cpu</span>().<span class="f">numpy</span>()             <span class="c"># D2H</span></code></pre>
+</div></body></html>

@@ -1,0 +1,5 @@
+flask>=3.0
+numpy>=1.26
+# Real GPU (optional, only on CUDA machines):
+#   pip install torch --index-url https://download.pytorch.org/whl/cu121
+#   # or: pip install cupy-cuda12x   /   pip install numba

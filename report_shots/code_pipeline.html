@@ -1,0 +1,30 @@
+<!doctype html><html><head><meta charset="utf-8">
+<title>code shot 1</title>
+<style>
+  body { margin:0; background:#1e1e1e; }
+  .win { max-width:1060px; margin:24px auto; background:#1e1e1e; border:1px solid #333;
+         border-radius:10px; overflow:hidden; font:15px/1.55 Consolas, monospace; }
+  .tab { background:#252526; color:#ddd; padding:8px 16px; font-family:Segoe UI, sans-serif;
+         font-size:14px; border-bottom:1px solid #333; }
+  pre { margin:0; padding:16px 18px; color:#d4d4d4; }
+  .k { color:#569cd6; } .s { color:#ce9178; } .c { color:#6a9955; } .f { color:#dcdcaa; } .n { color:#b5cea8; }
+</style></head><body><div class="win">
+<div class="tab">device_core.py — the six-stage launch pipeline (teaching core)</div>
+<pre><code><span class="c"># 1. cudaMalloc (simulated: allocate device buffers)</span>
+dev_buf = {k: np.empty_like(v) <span class="k">for</span> k, v <span class="k">in</span> inputs.items()}
+
+<span class="c"># 2. cudaMemcpy H2D (simulated: host -&gt; device copy)</span>
+<span class="k">for</span> k, v <span class="k">in</span> inputs.items():
+    np.copyto(dev_buf[k], v)
+
+<span class="c"># 3. kernel&lt;&lt;&lt;grid, block&gt;&gt;&gt; on device</span>
+out, kernel_ms = <span class="f">device_kernel_threaded</span>(kernel, dev_buf, workers=workers)
+
+<span class="c"># 4. cudaDeviceSynchronize (join + fixed cost)</span>
+sync_ms = <span class="n">0.05</span>
+
+<span class="c"># 5. cudaMemcpy D2H + 6. cudaFree</span>
+host_out = np.<span class="f">array</span>(out, copy=<span class="k">True</span>)
+<span class="k">del</span> dev_buf
+total_ms = alloc_ms + h2d_ms + kernel_ms + sync_ms + d2h_ms + free_ms</code></pre>
+</div></body></html>

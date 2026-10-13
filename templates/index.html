@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HostLaunch Lab — how host code launches device computation</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style>
+  :root { --bg:#09090b; --panel:#18181b; --line:#27272a; --txt:#fafafa;
+          --mut:#a1a1aa; --acc:#22d3ee; --h2d:#f472b6; --ker:#a3e635;
+          --d2h:#fbbf24; --misc:#818cf8; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt);
+         font:14px/1.5 system-ui, Segoe UI, Roboto, sans-serif; }
+  .topbar { position:sticky; top:0; z-index:10; backdrop-filter:blur(12px);
+            background:rgba(9,9,11,.8); border-bottom:1px solid var(--line); }
+  .wrap { max-width:1200px; margin:0 auto; padding:14px 18px; }
+  .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  .title { font-weight:800; font-size:20px; letter-spacing:-.02em; }
+  .mono { font-family:ui-monospace, Consolas, monospace; }
+  .sub { color:var(--mut); font-size:12px; }
+  .pill { margin-left:auto; padding:4px 12px; border-radius:999px;
+          border:1px solid var(--line); font-size:12px; }
+  .pill.live { border-color:var(--ker); color:var(--ker); }
+  .pill.race { border-color:var(--d2h); color:var(--d2h); }
+  .grid { display:grid; grid-template-columns:300px 1fr; gap:14px; }
+  @media (max-width:900px){ .grid{grid-template-columns:1fr;} }
+  .card { background:var(--panel); border:1px solid var(--line);
+          border-radius:14px; padding:14px; }
+  .kicker { font-size:11px; letter-spacing:.12em; color:var(--mut);
+            text-transform:uppercase; }
+  .big { font-size:28px; font-weight:800; }
+  .btn { display:inline-block; border:1px solid var(--line); background:#27272a;
+         color:var(--txt); border-radius:10px; padding:9px 14px; cursor:pointer;
+         font-weight:700; }
+  .btn.primary { background:var(--acc); color:#04252b; border-color:transparent; }
+  .btn.warn { background:var(--d2h); color:#3a2503; border-color:transparent; }
+  .btn:disabled { opacity:.5; cursor:default; }
+  label { display:block; font-size:12px; color:var(--mut); margin:8px 0 2px; }
+  select, input { width:100%; background:#09090b; color:var(--txt);
+                  border:1px solid var(--line); border-radius:8px; padding:7px 8px; }
+  .pipe { display:flex; height:26px; border-radius:8px; overflow:hidden;
+          border:1px solid var(--line); margin-top:8px; }
+  .pipe div { height:100%; }
+  .legend { display:flex; gap:10px; flex-wrap:wrap; font-size:11px;
+            color:var(--mut); margin-top:6px; }
+  .dot { display:inline-block; width:10px; height:10px; border-radius:3px;
+         margin-right:4px; vertical-align:baseline; }
+  #log { height:220px; overflow:auto; background:#09090b;
+         border:1px solid var(--line); border-radius:10px; padding:8px;
+         font-family:ui-monospace, Consolas, monospace; font-size:12px; }
+  #log div { padding:2px 0; border-bottom:1px dotted #27272a; }
+  .steps { display:grid; grid-template-columns:repeat(6,1fr); gap:6px; margin-top:8px;}
+  @media (max-width:900px){ .steps{grid-template-columns:repeat(3,1fr);} }
+  .step { border:1px solid var(--line); border-radius:10px; padding:8px;
+          text-align:center; font-size:11px; color:var(--mut); }
+  .step b { display:block; color:var(--txt); font-size:12px; }
+  .step.hot { border-color:var(--acc); color:var(--txt); }
+  code { background:#27272a; padding:1px 6px; border-radius:6px; }
+</style>
+</head>
+<body>
+<div class="topbar"><div class="wrap row">
+  <div><div class="title">⚡ HostLaunch Lab</div>
+  <div class="sub mono">host (CPU) → cudaMalloc → H2D → kernel&lt;&lt;&lt;grid,block&gt;&gt;&gt; → sync → D2H → free</div></div>
+  <div class="pill mono" id="status">idle · simulated device</div>
+</div></div>
+
+<div class="wrap">
+  <div class="row" style="margin:12px 0">
+    <span class="sub">1 pick → 2 launch → 3 race. The <b style="color:var(--txt)">ONE idea</b>: host code never computes — it allocates, copies, launches, waits, copies back.</span>
+  </div>
+  <div class="grid">
+    <div class="card">
+      <div class="kicker">Controls</div>
+      <label>Kernel (device program)</label>
+      <select id="kernel">
+        <option value="saxpy">saxpy — Y = a·X + Y (classic first CUDA sample)</option>
+        <option value="vecadd">vecadd — C = A + B</option>
+        <option value="blur">blur — 3-point stencil (image tile stand-in)</option>
+      </select>
+      <label>Vector size N (elements)</label>
+      <input id="n" type="number" value="200000" min="1000" max="2000000" step="10000">
+      <div class="row">
+        <div style="flex:1"><label>Grid (blocks)</label><input id="grid" type="number" value="64" min="1" max="512"></div>
+        <div style="flex:1"><label>Block (threads)</label><input id="block" type="number" value="256" min="32" max="1024" step="32"></div>
+      </div>
+      <label>Launches to stream</label>
+      <input id="launches" type="number" value="20" min="1" max="200">
+      <div class="row" style="margin-top:10px">
+        <button class="btn primary" id="start">▶ Launch stream</button>
+        <button class="btn" id="stop">■ Stop</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn warn" id="bench">⚡ Race: CPU vs device</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn" id="realgpu">Try real GPU</button>
+      </div>
+      <p class="sub">Shortcuts: <code>Ctrl+Enter</code> launches. Runs on port <code>5001</code> so it never clashes with your sensor-fusion demo on <code>5000</code>.</p>
+      <div class="sub mono" id="devinfo">device: …</div>
+    </div>
+
+    <div>
+      <div class="row">
+        <div class="card" style="flex:1"><div class="kicker">◷ kernel (device busy)</div><div class="big mono" id="mKernel">—</div><div class="sub mono" id="mKernelSub">last launch</div></div>
+        <div class="card" style="flex:1"><div class="kicker">⏱ total (host view)</div><div class="big mono" id="mTotal">—</div><div class="sub mono" id="mTotalSub">malloc→free</div></div>
+        <div class="card" style="flex:1"><div class="kicker">🚀 speedup vs host loop</div><div class="big mono" id="mSpeed">—</div><div class="sub mono" id="mSpeedSub">race to fill</div></div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <div class="kicker">Host → device pipeline (last launch, ms)</div>
+        <div class="pipe" id="pipe"></div>
+        <div class="legend" id="pipeLegend"></div>
+        <div class="steps" id="steps"></div>
+      </div>
+
+      <div class="row" style="margin-top:14px">
+        <div class="card" style="flex:1"><div class="kicker">Launch history (ms)</div><canvas id="chHist" height="150"></canvas></div>
+        <div class="card" style="flex:1"><div class="kicker">Where time goes (last launch)</div><canvas id="chStage" height="150"></canvas></div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <div class="kicker">Host log — read one line aloud in class, you've demoed a launch</div>
+        <div id="log"></div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <div class="kicker">How to explain it (30 seconds)</div>
+        <p>“The <b>host</b> (CPU, Python) never does the maths. It <code>mallocs</code> on the device, <code>copies H2D</code>, fires <code>kernel&lt;&lt;&lt;grid,block&gt;&gt;&gt;</code> so thousands of threads run at once, <code>syncs</code>, then <code>copies D2H</code>. The pink/green/yellow bar above is that story in milliseconds. Small N is launch-overhead bound — big N is where the device wins.”</p>
+        <p class="sub mono" id="cfgline"></p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let es=null, hist=[], lastStages=null;
+const $=id=>document.getElementById(id);
+const statusEl=$('status'), logEl=$('log');
+function setStatus(t,cls){ statusEl.textContent=t; statusEl.className='pill mono '+cls; }
+function log(msg){ const d=document.createElement('div'); d.textContent=msg; logEl.prepend(d); }
+const STAGES=[['alloc','alloc','#818cf8'],['h2d','H2D','#f472b6'],['kernel','kernel','#a3e635'],['sync','sync','#22d3ee'],['d2h','D2H','#fbbf24'],['free','free','#818cf8']];
+function renderPipe(st,total){
+  const pipe=$('pipe'); pipe.innerHTML='';
+  STAGES.forEach(([k,label,col])=>{
+    const v=st[k]||0, pct=total>0?Math.max(2,100*v/total):0;
+    const d=document.createElement('div'); d.style.width=pct+'%'; d.style.background=col; d.title=`${label} ${v}ms`; pipe.appendChild(d);
+  });
+  $('pipeLegend').innerHTML=STAGES.map(([k,label,col])=>`<span><span class="dot" style="background:${col}"></span>${label} ${st[k]}ms</span>`).join('');
+  const order=[['cudaMalloc','host asks device for room'],['cudaMemcpy H2D','host → device'],['kernel<<<grid,block>>>','device computes'],['cudaDeviceSynchronize','host waits'],['cudaMemcpy D2H','device → host'],['cudaFree','release']];
+  const keys=['alloc','h2d','kernel','sync','d2h','free'];
+  $('steps').innerHTML=order.map((o,i)=>`<div class="step hot"><b>${o[0]}</b>${o[1]}<br><span class="mono">${st[keys[i]]} ms</span></div>`).join('');
+}
+const chHist=new Chart($('chHist'),{type:'line',data:{labels:[],datasets:[{label:'kernel ms',data:[],borderColor:'#a3e635',tension:.3},{label:'total ms',data:[],borderColor:'#22d3ee',tension:.3}]},options:{plugins:{legend:{labels:{color:'#fafafa'}}},scales:{x:{ticks:{color:'#a1a1aa'}},y:{ticks:{color:'#a1a1aa'}}}}});
+let chStage=new Chart($('chStage'),{type:'bar',data:{labels:['alloc','H2D','kernel','sync','D2H','free'],datasets:[{data:[0,0,0,0,0,0],backgroundColor:['#818cf8','#f472b6','#a3e635','#22d3ee','#fbbf24','#818cf8']}]},options:{plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#a1a1aa'}},y:{ticks:{color:'#a1a1aa'}}}}});
+function pushHist(row){
+  hist.push(row); if(hist.length>60) hist.shift();
+  chHist.data.labels=hist.map(r=>r.launch_id);
+  chHist.data.datasets[0].data=hist.map(r=>r.stages_ms.kernel);
+  chHist.data.datasets[1].data=hist.map(r=>r.total_ms);
+  chHist.update();
+  chStage.data.datasets[0].data=['alloc','h2d','kernel','sync','d2h','free'].map(k=>row.stages_ms[k]);
+  chStage.update();
+}
+function cfg(){ return {kernel:$('kernel').value,n:+$('n').value,grid:+$('grid').value,block:+$('block').value,launches:+$('launches').value}; }
+function start(){
+  stop(); hist=[]; chHist.data.labels=[]; chHist.data.datasets.forEach(d=>d.data=[]); chHist.update();
+  const c=cfg();
+  $('cfgline').textContent=`kernel=${c.kernel} n=${c.n} grid=${c.grid} block=${c.block} threads=${c.grid*c.block} coverage=${(c.n/(c.grid*c.block)).toFixed(2)} elems/thread`;
+  setStatus('live · '+c.grid*c.block+' threads','live');
+  log(`host: cudaMalloc(${c.n} floats) …`);
+  es=new EventSource(`/stream?kernel=${c.kernel}&n=${c.n}&grid=${c.grid}&block=${c.block}&launches=${c.launches}`);
+  es.onmessage=e=>{
+    const r=JSON.parse(e.data);
+    if(r.done){ setStatus('idle · stream done',''); es.close(); es=null; return; }
+    $('mKernel').textContent=r.stages_ms.kernel+' ms';
+    $('mTotal').textContent=r.total_ms+' ms';
+    $('mKernelSub').textContent=`${r.kernel} <<<${r.grid},${r.block}>>> · ${r.total_threads} threads`;
+    renderPipe(r.stages_ms,r.total_ms);
+    pushHist(r);
+    log(r.story);
+  };
+  es.onerror=()=>{ setStatus('idle · stream error',''); };
+}
+function stop(){ if(es){es.close();es=null;} setStatus('idle · simulated device',''); }
+$('start').onclick=start; $('stop').onclick=stop;
+document.addEventListener('keydown',e=>{ if(e.ctrlKey&&e.key==='Enter') start(); });
+$('bench').onclick=async()=>{
+  const c=cfg(); setStatus('racing · CPU vs device','race');
+  log(`race: host-only Python loop vs device launch (n=${c.n}) …`);
+  const r=await (await fetch('/api/benchmark',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(c)})).json();
+  $('mSpeed').textContent=r.speedup_total+'x';
+  $('mSpeedSub').textContent=`cpu ${r.cpu_ms}ms vs device ${r.device_total_ms}ms (kernel ${r.device_kernel_ms}ms)`;
+  renderPipe(r.launch.stages_ms,r.launch.total_ms); pushHist({...r.launch,launch_id:hist.length});
+  log(`race done: CPU ${r.cpu_ms}ms, device total ${r.device_total_ms}ms → ${r.speedup_total}x faster. kernel-only ${r.speedup_kernel_only}x. ${r.note}`);
+  setStatus('idle · race done','');
+};
+$('realgpu').onclick=async()=>{
+  const c=cfg(); setStatus('probing real GPU…','race');
+  const r=await (await fetch('/api/cuda-run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...c,launches:5})})).json();
+  if(!r.ok){ log('real GPU: '+(r.rows?.[0]?.error||r.stderr||'not available — simulated device is the demo')); setStatus('idle · no real GPU',''); return; }
+  r.rows.forEach(row=>{ $('mKernel').textContent=row.stages_ms.kernel+' ms'; $('mTotal').textContent=row.total_ms+' ms'; renderPipe(row.stages_ms,row.total_ms); pushHist(row); log(`REAL ${row.device} launch ${row.launch_id}: kernel ${row.stages_ms.kernel}ms, total ${row.total_ms}ms`); });
+  setStatus('idle · real GPU shown','');
+};
+fetch('/api/device-status').then(r=>r.json()).then(d=>{
+  $('devinfo').textContent=`device: simulated-parallel-device ready · cpu cores ${d.cpu_cores} · numpy ${d.numpy} · real GPU: ${d.real_device||'none (Try real GPU explains)'}`;
+});
+lucide.createIcons();
+renderPipe({alloc:0,h2d:0,kernel:0,sync:0,d2h:0,free:0},1);
+</script>
+</body>
+</html>
